@@ -1,0 +1,70 @@
+Vagrant.configure(2) do |config|
+  config.vm.box = "bento/centos-7.2"
+  config.vm.network "forwarded_port", guest: 80, host: 20080
+
+  config.vm.synced_folder "../../../", "/opt/librenms"
+
+  config.vm.provision "shell", inline: <<-SHELL
+    #sudo yum update -y
+    echo "Installing additional packages..."
+    yum install -q -y epel-release
+    yum install -q -y mariadb-server mariadb nano telnet php php-cli php-gd php-mysql php-snmp php-pear php-curl httpd net-snmp graphviz graphviz-php ImageMagick jwhois nmap mtr rrdtool MySQL-python net-snmp-utils php-mcrypt fping git
+    pear install Net_IPv4-1.3.4
+    pear install Net_IPv6-1.2.2b2
+
+    #useradd vagrant -d /opt/librenms -M -r
+    usermod -a -G vagrant apache
+
+    systemctl enable mariadb.service
+    systemctl start mariadb.service
+
+    cat <<EOF > /etc/httpd/conf.d/librenms.conf
+<VirtualHost *:80>
+  DocumentRoot /opt/librenms/html/
+  ServerName  librenms.example.com
+  CustomLog /opt/librenms/logs/access_log combined
+  ErrorLog /opt/librenms/logs/error_log
+  AllowEncodedSlashes On
+  <Directory "/opt/librenms/html/">
+    AllowOverride All
+    Options FollowSymLinks MultiViews
+    Require all granted
+  </Directory>
+</VirtualHost>
+EOF
+    rm /etc/httpd/conf.d/welcome.conf
+    mkdir -p /opt/librenms/logs
+    mkdir -p /opt/librenms/rrd
+
+    if [[ ! -f /opt/librenms/config.php ]]; then
+        cp /opt/librenms/config.php.default /opt/librenms/config.php
+        sed -i 's/USERNAME/librenms/' /opt/librenms/config.php
+        sed -i 's/PASSWORD/librenms/' /opt/librenms/config.php
+    fi
+
+    sudo systemctl enable httpd
+    sudo systemctl start httpd
+
+    sudo mysql <<EOF
+CREATE DATABASE librenms;
+GRANT ALL PRIVILEGES ON librenms.*
+  TO 'librenms'@'localhost'
+  IDENTIFIED BY 'librenms'
+;
+GRANT ALL PRIVILEGES ON librenms.*
+  TO 'vagrant'@'localhost'
+;
+FLUSH PRIVILEGES;
+EOF
+ 
+    cd /opt/librenms
+    php build-base.php
+    php adduser.php admin password 10 admin\@test.domain
+    cp librenms.nonroot.cron /etc/cron.d/librenms
+
+    echo "LibreNMS should be available at http://localhost:20080/"
+    echo "Username: admin"
+    echo "Password: password"
+  SHELL
+
+end
